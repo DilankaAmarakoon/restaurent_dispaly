@@ -1,166 +1,470 @@
-import 'package:advertising_screen/home_screen.dart';
-import 'package:advertising_screen/models/tv_view_model.dart';
-import 'package:advertising_screen/reusableWidget/form_text_field.dart';
-import 'package:advertising_screen/reusableWidget/showDialog.dart';
-import 'package:advertising_screen/reusableWidget/tab_btn.dart';
+import 'package:advertising_screen/provider/handle_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:xml_rpc/client_c.dart' as xml_rpc;
+import 'package:provider/provider.dart';
+import 'display_screen.dart';
 
-class LogingForm extends StatefulWidget {
-  const LogingForm({super.key});
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
 
   @override
-  State<LogingForm> createState() => _LogingFormState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LogingFormState extends State<LogingForm> {
-  TextEditingController url = TextEditingController();
-  TextEditingController dbName = TextEditingController();
-  TextEditingController userName = TextEditingController();
-  TextEditingController password = TextEditingController();
-  TextEditingController deviceId = TextEditingController();
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _deviceMacAddress = TextEditingController();
+  final _usernameFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _deviceMacAddressFocus = FocusNode();
 
-  final FocusNode focusNode1 = FocusNode();
-  final FocusNode focusNode2 = FocusNode();
-  final FocusNode focusNode3 = FocusNode();
-  final FocusNode focusNode4 = FocusNode();
-  final FocusNode focusNode5 = FocusNode();
+  bool _obscurePassword = true;
+  bool _obscureDeviceMacAddress = true;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
 
-  int uId = -1;
+  @override
+  void initState() {
+    super.initState();
+    _setupAnimations();
+  }
 
-  TvViewModelsData modelData = TvViewModelsData();
+  void _setupAnimations() {
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.5),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutBack,
+    ));
+
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _deviceMacAddress.dispose();
+    _usernameFocus.dispose();
+    _passwordFocus.dispose();
+    _deviceMacAddressFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    authProvider.clearError();
+
+    final success = await authProvider.login(
+      _usernameController.text.trim(),
+      _passwordController.text,
+        _deviceMacAddress.text,
+    );
+
+    if (success && mounted) {
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, _) => const DisplayScreen(),
+          transitionDuration: const Duration(milliseconds: 500),
+          transitionsBuilder: (context, animation, _, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+    }
+  }
+
+  void _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent) {
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.arrowDown) {
+        if (_usernameFocus.hasFocus) {
+          FocusScope.of(context).requestFocus(_passwordFocus);
+        } else if (_passwordFocus.hasFocus) {
+          FocusScope.of(context).requestFocus(_deviceMacAddressFocus);
+        }
+      } else if (key == LogicalKeyboardKey.arrowUp) {
+        if (_deviceMacAddressFocus.hasFocus) {
+          FocusScope.of(context).requestFocus(_passwordFocus);
+        } else if (_passwordFocus.hasFocus) {
+          FocusScope.of(context).requestFocus(_usernameFocus);
+        }
+      } else if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+        _handleLogin();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFEFEFEF), // Light background
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: 100, maxHeight: 600),
-              child: IntrinsicHeight(
-                child: Center(
-                  child: Container(
-                    width: MediaQuery
-                        .of(context)
-                        .size
-                        .width * 0.3,
-                    constraints: const BoxConstraints(
-                      maxWidth: 500, // Limit max width for readability
-                    ),
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 15,
-                          spreadRadius: 4,
-                          offset: const Offset(0, 6),
+      body: KeyboardListener(
+        focusNode: FocusNode(),
+        autofocus: true,
+        onKeyEvent: _handleKeyEvent,
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1565C0),
+                Color(0xFF1E88E5),
+                Color(0xFF42A5F5),
+              ],
+            ),
+          ),
+          child: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16), // Reduced from 24
+                child: FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: SlideTransition(
+                    position: _slideAnimation,
+                    child: Card(
+                      elevation: 12, // Reduced from 16
+                      shadowColor: Colors.black.withOpacity(0.3),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16), // Reduced from 20
+                      ),
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          maxWidth: 320, // Reduced from 450
+                          minHeight: 380, // Reduced from 500
                         ),
-                      ],
-                    ),
-                    child: RawKeyboardListener(
-                      focusNode: FocusNode(),
-                      autofocus: true,
-                      onKey: (RawKeyEvent event) {
-                        if (event is RawKeyDownEvent) {
-                          if (event.logicalKey ==
-                              LogicalKeyboardKey.arrowDown) {
-                            _handleArrowDown();
-                          } else
-                          if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                            _handleArrowUp();
-                          }
-                        }
-                      },
-                      child: FocusTraversalGroup(
-                        policy: OrderedTraversalPolicy(),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Image.asset('assets/fgf.png', height: 100),
-                            Text(
-                              "Sign In",
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            FocusTraversalOrder(
-                              order: NumericFocusOrder(1),
-                              child: SizedBox(
-                                height: 45,
-                                child: FormTextField(
-                                  focusNode: focusNode1,
-                                  controller: url,
-                                  lable: "Enter URL",
-                                  type: FormTextFieldType.text,
+                        padding: const EdgeInsets.all(24), // Reduced from 40
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // App Icon - Smaller
+                              Container(
+                                width: 60, // Reduced from 100
+                                height: 60, // Reduced from 100
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [Color(0xFF1E88E5), Color(0xFF1565C0)],
+                                  ),
+                                  borderRadius: BorderRadius.circular(12), // Reduced from 20
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.blue.withOpacity(0.3),
+                                      blurRadius: 10, // Reduced from 15
+                                      offset: const Offset(0, 4), // Reduced from (0, 8)
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.restaurant_menu,
+                                  size: 32, // Reduced from 50
+                                  color: Colors.white,
                                 ),
                               ),
-                            ),
-                            FocusTraversalOrder(
-                              order: NumericFocusOrder(2),
-                              child: SizedBox(
-                                height: 45,
-                                child: FormTextField(
-                                  focusNode: focusNode2,
-                                  controller: dbName,
-                                  lable: "Enter Database",
-                                  type: FormTextFieldType.text,
+
+                              const SizedBox(height: 16), // Reduced from 24
+
+                              // Title - Smaller
+                              Text(
+                                'Restaurant Display',
+                                style: Theme.of(context).textTheme.headlineSmall?.copyWith( // Changed from headlineMedium
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF1565C0),
                                 ),
                               ),
-                            ),
-                            SizedBox(
-                              height: 45,
-                              child: FormTextField(
-                                focusNode: focusNode3,
-                                controller: userName,
-                                lable: "Enter Username",
-                                type: FormTextFieldType.text,
+
+                              const SizedBox(height: 4), // Reduced from 8
+
+                              // Subtitle - Smaller
+                              Text(
+                                'Digital Advertising System',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith( // Changed from bodyLarge
+                                  color: Colors.grey[600],
+                                  fontSize: 12, // Added explicit smaller size
+                                ),
                               ),
-                            ),
-                            SizedBox(
-                              height: 45,
-                              child: FormTextField(
-                                focusNode: focusNode4,
-                                controller: password,
-                                lable: "Enter Password",
-                                type: FormTextFieldType.password,
+
+                              const SizedBox(height: 20), // Reduced from 40
+
+                              // Username Field - Compact
+                              TextFormField(
+                                controller: _usernameController,
+                                focusNode: _usernameFocus,
+                                autofocus: true,
+                                style: const TextStyle(fontSize: 14), // Smaller text
+                                decoration: InputDecoration(
+                                  labelText: 'Username',
+                                  hintText: 'Enter username',
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16), // Compact padding
+                                  prefixIcon: Container(
+                                    margin: const EdgeInsets.all(6), // Reduced from 8
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1E88E5).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6), // Reduced from 8
+                                    ),
+                                    child: const Icon(
+                                      Icons.person,
+                                      color: Color(0xFF1E88E5),
+                                      size: 20, // Smaller icon
+                                    ),
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10), // Reduced from 12
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFF1E88E5),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.trim().isEmpty) {
+                                    return 'Enter username';
+                                  }
+                                  if (value.trim().length < 3) {
+                                    return 'Min 3 characters';
+                                  }
+                                  return null;
+                                },
+                                onFieldSubmitted: (_) {
+                                  FocusScope.of(context).requestFocus(_passwordFocus);
+                                },
                               ),
-                            ),
-                            SizedBox(
-                              height: 45,
-                              child: FormTextField(
-                                focusNode: focusNode5,
-                                controller: deviceId,
-                                lable: "Enter Device ID",
-                                type: FormTextFieldType.text,
+
+                              const SizedBox(height: 12), // Reduced from 16
+
+                              // Password Field - Compact
+                              TextFormField(
+                                controller: _passwordController,
+                                focusNode: _passwordFocus,
+                                obscureText: _obscurePassword,
+                                style: const TextStyle(fontSize: 14),
+                                decoration: InputDecoration(
+                                  labelText: 'Password',
+                                  hintText: 'Enter password',
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                                  prefixIcon: Container(
+                                    margin: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1E88E5).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(
+                                      Icons.lock,
+                                      color: Color(0xFF1E88E5),
+                                      size: 20,
+                                    ),
+                                  ),
+                                  suffixIcon: IconButton(
+                                    iconSize: 20, // Smaller icon
+                                    icon: Icon(
+                                      _obscurePassword
+                                          ? Icons.visibility
+                                          : Icons.visibility_off,
+                                      color: Colors.grey[600],
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _obscurePassword = !_obscurePassword;
+                                      });
+                                    },
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFF1E88E5),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Enter password';
+                                  }
+                                  if (value.length < 3) {
+                                    return 'Min 3 characters';
+                                  }
+                                  return null;
+                                },
+                                onFieldSubmitted: (_) {
+                                  FocusScope.of(context).requestFocus(_deviceMacAddressFocus);
+                                },
                               ),
-                            ),
-                            TapButton(
-                              lable: "Sign In",
-                              btnColor: const Color(0xFF6A1B9A),
-                              fontSize: 18,
-                              width: 50,
-                              height: 40,
-                              onPressed: () async {
-                                if (await checkUserAuthenticationValidate()) {
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (context) => HomeScreen()),
+
+                              const SizedBox(height: 12),
+
+                              // Device Mac Address Field - Compact
+                              TextFormField(
+                                controller: _deviceMacAddress,
+                                focusNode: _deviceMacAddressFocus,
+                                obscureText: _obscureDeviceMacAddress,
+                                style: const TextStyle(fontSize: 14),
+                                decoration: InputDecoration(
+                                  labelText: 'Device Mac Address',
+                                  hintText: 'Enter Mac Address',
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                                  prefixIcon: Container(
+                                    margin: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1E88E5).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(
+                                      Icons.my_location,
+                                      color: Color(0xFF1E88E5),
+                                      size: 20,
+                                    ),
+                                  ),
+                                  suffixIcon: IconButton(
+                                    iconSize: 20,
+                                    icon: Icon(
+                                      _obscureDeviceMacAddress
+                                          ? Icons.visibility
+                                          : Icons.visibility_off,
+                                      color: Colors.grey[600],
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _obscureDeviceMacAddress = !_obscureDeviceMacAddress;
+                                      });
+                                    },
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFF1E88E5),
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Enter Mac Address';
+                                  }
+                                  return null;
+                                },
+                                onFieldSubmitted: (_) => _handleLogin(),
+                              ),
+
+                              const SizedBox(height: 16), // Reduced from 30
+
+                              // Error Message - Compact
+                              Consumer<AuthProvider>(
+                                builder: (context, authProvider, child) {
+                                  if (authProvider.errorMessage != null) {
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 12), // Reduced from 20
+                                      padding: const EdgeInsets.all(12), // Reduced from 16
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade50,
+                                        border: Border.all(color: Colors.red.shade200),
+                                        borderRadius: BorderRadius.circular(8), // Reduced from 12
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.error_outline,
+                                            color: Colors.red.shade600,
+                                            size: 16, // Reduced from 20
+                                          ),
+                                          const SizedBox(width: 8), // Reduced from 12
+                                          Expanded(
+                                            child: Text(
+                                              authProvider.errorMessage!,
+                                              style: TextStyle(
+                                                color: Colors.red.shade700,
+                                                fontSize: 12, // Reduced from 14
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     );
-                                }
-                              },
-                            ),
-                          ],
+                                  }
+                                  return const SizedBox.shrink();
+                                },
+                              ),
+
+                              // Login Button - Compact
+                              SizedBox(
+                                width: double.infinity,
+                                child: Consumer<AuthProvider>(
+                                  builder: (context, authProvider, child) {
+                                    return ElevatedButton(
+                                      onPressed: authProvider.isLoading ? null : _handleLogin,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF1E88E5),
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(10), // Reduced from 12
+                                        ),
+                                        elevation: 6, // Reduced from 8
+                                        shadowColor: Colors.blue.withOpacity(0.4),
+                                      ),
+                                      child: authProvider.isLoading
+                                          ? const Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          SizedBox(
+                                            height: 16, // Reduced from 20
+                                            width: 16, // Reduced from 20
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                            ),
+                                          ),
+                                          SizedBox(width: 2), // Reduced from 12
+                                          Text(
+                                            'Signing In...',
+                                            style: TextStyle(fontSize: 14), // Reduced from 16
+                                          ),
+                                        ],
+                                      )
+                                          :  Center(
+                                            child: Text(
+                                              'Sign In',
+                                              style: TextStyle(
+                                            fontSize: 16, // Reduced from 18
+                                            fontWeight: FontWeight.bold,
+                                                                                    ),
+                                                                                  ),
+                                          ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -168,94 +472,9 @@ class _LogingFormState extends State<LogingForm> {
                 ),
               ),
             ),
-          );
-        },
+          ),
+        ),
       ),
-
     );
-  }
-
-  void _handleArrowDown() {
-    if (focusNode1.hasFocus) {
-      FocusScope.of(context).requestFocus(focusNode2);
-    } else if (focusNode2.hasFocus) {
-      FocusScope.of(context).requestFocus(focusNode3);
-    }
-  }
-
-  void _handleArrowUp() {
-    if (focusNode3.hasFocus) {
-      FocusScope.of(context).requestFocus(focusNode2);
-    } else if (focusNode2.hasFocus) {
-      FocusScope.of(context).requestFocus(focusNode1);
-    }
-  }
-
-  Future<int> fetchUserId(String url, String dbName, String userName,
-      String password) async {
-    try {
-      final userId = await xml_rpc.call(
-        Uri.parse('https://$url/xmlrpc/2/common'),
-        'login',
-        [dbName, userName, password],
-      );
-      print("vvbbnn..$userId");
-      if (userId != false) {
-        return userId;
-      } else {
-        return -1;
-      }
-    } catch (e) {
-      return -1;
-    }
-  }
-
-  Future<bool> checkUserAuthenticationValidate() async {
-    if (url.text
-        .trim()
-        .isEmpty || password.text
-        .trim()
-        .isEmpty || userName.text
-        .trim()
-        .isEmpty || dbName.text
-        .trim()
-        .isEmpty || deviceId.text
-        .trim()
-        .isEmpty) {
-      ShowDialog(context,
-          "Please ensure all required fields are completed before proceeding !");
-      return false;
-    }
-    uId = await fetchUserId(
-        url.text.trim(), dbName.text.trim(), userName.text.trim(),
-        password.text.trim());
-    if (uId != -1) {
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('uId', uId);
-      await prefs.setString('url', url.text.trim());
-      await prefs.setString('dbName', dbName.text.trim());
-      await prefs.setString('password', password.text.trim());
-      await prefs.setString('device_Id', deviceId.text.trim());
-
-      List<dynamic> list = await modelData.productLineData(
-          deviceId.text,
-          url.text.trim(),
-          dbName.text.trim(),
-          password.text.trim(),
-          uId,
-          true
-      );
-      if (list.isEmpty) {
-        ShowDialog(context,
-            "No data found for the provided Device ID. Please verify the entered fields and try again !");
-        return false;
-      } else {
-        return true;
-      }
-    } else {
-      ShowDialog(context,
-          "No data found for the provided Device ID. Please verify the entered fields and try again !");
-      return false;
-    }
   }
 }

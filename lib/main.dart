@@ -1,26 +1,39 @@
-import 'package:advertising_screen/firbase_notification.dart';
-import 'package:advertising_screen/restart_app.dart';
+
+import 'package:advertising_screen/home_page.dart';
+import 'package:advertising_screen/provider/content_provider.dart';
+import 'package:advertising_screen/provider/handle_provider.dart';
+import 'package:advertising_screen/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import 'app_restart.dart';
+import 'constant/theme.dart';
 import 'firebase_options.dart';
-import 'home_screen.dart';
-import 'login_screen.dart';
+import 'notification_service.dart';
 
-void main() async{
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
     DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
   ]);
-  runApp(
-      RestartWidget(child: MyApp())
-  );
+
+  // Hide system UI for fullscreen experience
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+  runApp(RestartWidget(child: const MyApp()));
 }
+
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -28,41 +41,27 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
- class _MyAppState extends State<MyApp> {
-
-  bool isLoggedIn = false;
+class _MyAppState extends State<MyApp> {
   @override
   void initState() {
-    _checkUserAlreadyLoggedOrNot();
-    NotificationServices().initialize(
-        context
-    );
     super.initState();
+    // Initialize notification service
+    NotificationService().initialize(context);
   }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Advertisement Screen',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => ContentProvider()),
+      ],
+      child: MaterialApp(
+        title: 'Restaurant Display',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        home: const HomePage(),
       ),
-      home:  isLoggedIn ? HomeScreen() : LogingForm(),
     );
   }
-
-  void _checkUserAlreadyLoggedOrNot() async {
-    SharedPreferences pref = await SharedPreferences.getInstance();
-    int? id = pref.getInt("uId");
-    if (id != null && id > 0) {
-      setState(() {
-        isLoggedIn = true;
-      });
-    } else {
-      setState(() {
-        isLoggedIn = false;
-      });
-    }
-  }
- }
-
+}

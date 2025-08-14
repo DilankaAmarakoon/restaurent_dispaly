@@ -12,7 +12,16 @@
           "package_name": "com.example.advertising_screen"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "938638699606-android:com.example.advertising_screen.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.advertising_screen",
+            "certificate_hash": "7d159f41bf4c783a6df2c19462bfdb0e4d2927da"
+          }
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAZrr9BqzTagG857AYxW2dQPSxuc8QNCLk"

@@ -39,11 +39,14 @@ class TvViewModelsData{
     final  String deviceId;
 
     if(isUseOrNo){
-      url = urls;
-      uId = uIds;
-      dbName = dbNames;
-      password = passwords;
-      deviceId = deviceIds;
+      url = "https://dinemorego-uat-22518241.dev.odoo.com";
+      dbName = "dinemorego-uat-22518241";
+      password = "123";
+      // url = urls;
+      // uId = uIds;
+      // dbName = dbNames;
+      // password = passwords;
+      // deviceId = deviceIds;
     }else{
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       url = prefs.getString('url')!;
@@ -60,7 +63,7 @@ class TvViewModelsData{
     try {
       final productData = await xml_rpc.call(Uri.parse("https://$url/xmlrpc/2/object"),
         'execute_kw',
-        [dbName, uId, password, 'restaurant.display.line', 'search_read', [[['device_ip', '=', deviceId]]],],
+        [dbName, 2, password, 'restaurant.display.line', 'search_read', [[['device_ip', '=', 34343434]]],],
       );
       print("eeccc.$productData");
 
