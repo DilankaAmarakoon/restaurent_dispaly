@@ -2,9 +2,7 @@
 import 'package:advertising_screen/home_page.dart';
 import 'package:advertising_screen/provider/content_provider.dart';
 import 'package:advertising_screen/provider/handle_provider.dart';
-import 'package:advertising_screen/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
