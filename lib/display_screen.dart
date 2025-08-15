@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:advertising_screen/provider/content_provider.dart';
 import 'package:advertising_screen/provider/handle_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'admin_overlay.dart';
 import 'login_screen.dart';
+import 'odoo_polling.dart';
 
 class DisplayScreen extends StatefulWidget {
   const DisplayScreen({super.key});
@@ -23,6 +28,9 @@ class _DisplayScreenState extends State<DisplayScreen>
   bool _isDisposed = false;
   bool _isInitialized = false;
 
+  // Add Odoo polling service
+  final OdooPollingService _odooPollingService = OdooPollingService();
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +40,7 @@ class _DisplayScreenState extends State<DisplayScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isDisposed && mounted) {
         _initializeContent();
+        _initializeOdooPolling(); // Add this line
       }
     });
   }
@@ -39,6 +48,7 @@ class _DisplayScreenState extends State<DisplayScreen>
   @override
   void dispose() {
     _isDisposed = true;
+    _odooPollingService.dispose(); // Add this line
     WidgetsBinding.instance.removeObserver(this);
     _rotationTimer?.cancel();
     _videoController?.removeListener(_videoListener);
@@ -54,14 +64,16 @@ class _DisplayScreenState extends State<DisplayScreen>
 
     switch (state) {
       case AppLifecycleState.resumed:
-      // App resumed, restart content rotation
+      // App resumed, restart content rotation and polling
         if (_isInitialized) {
           _startContentRotation();
+          _odooPollingService.startPolling(); // Add this line
         }
         break;
       case AppLifecycleState.paused:
-      // App paused, pause video if playing
+      // App paused, pause video and polling
         _videoController?.pause();
+        _odooPollingService.stopPolling(); // Add this line
         break;
       case AppLifecycleState.detached:
       case AppLifecycleState.inactive:
@@ -73,19 +85,103 @@ class _DisplayScreenState extends State<DisplayScreen>
     }
   }
 
+  // Add this new method for Odoo polling initialization
+  Future<void> _initializeOdooPolling() async {
+    try {
+      debugPrint('🔄 Initializing Odoo polling service...');
+
+      final prefs = await SharedPreferences.getInstance();
+      final baseUrl = prefs.getString('base_url');
+      final database = prefs.getString('database');
+      final password = prefs.getString('password');
+      final deviceId = prefs.getString('device_id'); // ✅ FIX: Get deviceId from SharedPreferences
+
+      // Try to get username from different possible keys
+      String? username = prefs.getString('username') ??
+          prefs.getString('user_name') ??
+          prefs.getString('login') ??
+          'admin'; // fallback
+
+      debugPrint('📋 Odoo credentials check:');
+      debugPrint('   - Base URL: $baseUrl');
+      debugPrint('   - Database: $database');
+      debugPrint('   - Username: $username');
+      debugPrint('   - Device ID: $deviceId');
+      debugPrint('   - Password: ${password != null ? '***' : 'null'}');
+
+      if (baseUrl != null && database != null && password != null) {
+        // Clean URL for polling service
+        String cleanUrl = baseUrl.replaceAll('https://', '').replaceAll('http://', '');
+        if (!cleanUrl.startsWith('https://')) {
+          cleanUrl = 'https://$cleanUrl';
+        }
+
+        debugPrint('🔗 Cleaned URL for polling: $cleanUrl');
+
+        await _odooPollingService.initialize(
+          odooUrl: cleanUrl,
+          database: database,
+          username: username,
+          password: password,
+          modelToMonitor: 'restaurant.display.line',
+          fieldsToMonitor: ['image', 'video', 'duration', 'file_type'], // Monitor these fields
+          pollingIntervalSeconds: 10, // Check every 2 minutes
+          onImageUpdate: _handleOdooContentUpdate,
+          deviceId: deviceId, // ✅ FIX: Now properly defined
+        );
+
+        debugPrint('✅ Odoo polling initialized successfully');
+      } else {
+        debugPrint('⚠️ Missing credentials for Odoo polling initialization');
+        debugPrint('   - Please ensure all credentials are saved during login');
+      }
+    } catch (e) {
+      debugPrint('❌ Error initializing Odoo polling: $e');
+      // Don't throw error - polling is optional, app should still work
+    }
+  }
+
+  // Add this callback method for handling Odoo updates
+  void _handleOdooContentUpdate() {
+    if (_isDisposed || !mounted) return;
+
+    debugPrint('🔄 Odoo content update detected! Refreshing display...');
+
+    // Show a brief notification to user
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.sync, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Text('Content updated automatically'),
+          ],
+        ),
+        duration: Duration(seconds: 2),
+        backgroundColor: Colors.green,
+      ),
+    );
+
+    // Refresh content using existing method
+    _refreshContent();
+  }
+
   Future<void> _initializeContent() async {
     if (_isDisposed || _isInitialized) return;
 
     try {
+      debugPrint('🚀 Initializing content...');
       final contentProvider = Provider.of<ContentProvider>(context, listen: false);
       await contentProvider.loadContent();
 
       if (!_isDisposed && mounted) {
         _isInitialized = true;
         _startContentRotation();
+        debugPrint('✅ Content initialization complete');
       }
     } catch (e) {
-      debugPrint('Content initialization error: $e');
+      debugPrint('❌ Content initialization error: $e');
       if (!_isDisposed && mounted) {
         // Show error state will be handled by Consumer
       }
@@ -97,13 +193,18 @@ class _DisplayScreenState extends State<DisplayScreen>
 
     final contentProvider = Provider.of<ContentProvider>(context, listen: false);
 
-    if (contentProvider.contentItems.isEmpty) return;
+    if (contentProvider.contentItems.isEmpty) {
+      debugPrint('⚠️ No content items available for rotation');
+      return;
+    }
 
     // Cancel existing timer
     _rotationTimer?.cancel();
 
     final currentItem = contentProvider.currentItem;
     if (currentItem == null) return;
+
+    debugPrint('🔄 Starting content rotation - Current: ${currentItem.title} (${currentItem.type.name})');
 
     if (currentItem.type == MediaType.video) {
       _initializeVideo(currentItem.videoUrl!);
@@ -112,8 +213,77 @@ class _DisplayScreenState extends State<DisplayScreen>
     }
   }
 
-  Future<void> _initializeVideo(String videoUrl) async {
+  // Future<void> _initializeVideo(String videoUrl) async {
+  //   if (_isDisposed) return;
+  //
+  //   debugPrint('🎥 Initializing video: $videoUrl');
+  //
+  //   // Clean up previous video controller
+  //   _videoController?.removeListener(_videoListener);
+  //   _videoController?.dispose();
+  //   _videoController = null;
+  //
+  //   if (mounted) {
+  //     setState(() {
+  //       _isVideoInitialized = false;
+  //     });
+  //   }
+  //
+  //   try {
+  //     _videoController = VideoPlayerController.networkUrl(
+  //       Uri.parse(videoUrl),
+  //       videoPlayerOptions: VideoPlayerOptions(
+  //         allowBackgroundPlayback: false,
+  //         mixWithOthers: false,
+  //       ),
+  //     );
+  //
+  //     await _videoController!.initialize();
+  //
+  //     if (_isDisposed || !mounted) {
+  //       _videoController?.dispose();
+  //       return;
+  //     }
+  //
+  //     // Set up video completion listener before playing
+  //     _videoController!.addListener(_videoListener);
+  //
+  //     setState(() {
+  //       _isVideoInitialized = true;
+  //     });
+  //
+  //     // Start playing
+  //     await _videoController!.play();
+  //     _videoController!.setLooping(false);
+  //
+  //     debugPrint('✅ Video initialized and playing');
+  //
+  //   } catch (e) {
+  //     debugPrint('❌ Video initialization error: $e');
+  //     _videoController?.dispose();
+  //     _videoController = null;
+  //
+  //     if (!_isDisposed && mounted) {
+  //       setState(() {
+  //         _isVideoInitialized = false;
+  //       });
+  //       // Skip to next content after a delay
+  //       Future.delayed(const Duration(seconds: 1), () {
+  //         if (!_isDisposed && mounted) {
+  //           debugPrint('⏭️ Skipping to next content due to video error');
+  //           _nextContent();
+  //         }
+  //       });
+  //     }
+  //   }
+  // }
+
+  Future<void> _initializeVideo(String base64OrUrl) async {
+
+    print("wweee....>${base64OrUrl}");
     if (_isDisposed) return;
+
+    debugPrint('🎥 Initializing video...');
 
     // Clean up previous video controller
     _videoController?.removeListener(_videoListener);
@@ -127,13 +297,35 @@ class _DisplayScreenState extends State<DisplayScreen>
     }
 
     try {
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(videoUrl),
-        videoPlayerOptions: VideoPlayerOptions(
-          allowBackgroundPlayback: false,
-          mixWithOthers: false,
-        ),
-      );
+      if (_isBase64(base64OrUrl)) {
+        // Decode Base64 to bytes
+        final bytes = base64Decode(base64OrUrl);
+
+        // Write bytes to temporary file
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/temp_video.mp4');
+        await tempFile.writeAsBytes(bytes, flush: true);
+
+        debugPrint('📂 Playing video from temp file: ${tempFile.path}');
+
+        _videoController = VideoPlayerController.file(
+          tempFile,
+          videoPlayerOptions: VideoPlayerOptions(
+            allowBackgroundPlayback: false,
+            mixWithOthers: false,
+          ),
+        );
+      } else {
+        // Play from URL
+        debugPrint('🌐 Playing video from URL: $base64OrUrl');
+        _videoController = VideoPlayerController.networkUrl(
+          Uri.parse(base64OrUrl),
+          videoPlayerOptions: VideoPlayerOptions(
+            allowBackgroundPlayback: false,
+            mixWithOthers: false,
+          ),
+        );
+      }
 
       await _videoController!.initialize();
 
@@ -142,19 +334,20 @@ class _DisplayScreenState extends State<DisplayScreen>
         return;
       }
 
-      // Set up video completion listener before playing
+      // Set up listener
       _videoController!.addListener(_videoListener);
 
       setState(() {
         _isVideoInitialized = true;
       });
 
-      // Start playing
+      // Play video
       await _videoController!.play();
       _videoController!.setLooping(false);
 
+      debugPrint('✅ Video initialized and playing');
     } catch (e) {
-      debugPrint('Video initialization error: $e');
+      debugPrint('❌ Video initialization error: $e');
       _videoController?.dispose();
       _videoController = null;
 
@@ -162,15 +355,22 @@ class _DisplayScreenState extends State<DisplayScreen>
         setState(() {
           _isVideoInitialized = false;
         });
-        // Skip to next content after a delay
         Future.delayed(const Duration(seconds: 1), () {
           if (!_isDisposed && mounted) {
+            debugPrint('⏭️ Skipping to next content due to video error');
             _nextContent();
           }
         });
       }
     }
   }
+
+// Simple check if string looks like Base64
+  bool _isBase64(String str) {
+    final base64RegExp = RegExp(r'^[A-Za-z0-9+/=]+$');
+    return base64RegExp.hasMatch(str) && str.length % 4 == 0;
+  }
+
 
   void _videoListener() {
     if (_isDisposed || _videoController == null || !mounted) return;
@@ -179,7 +379,7 @@ class _DisplayScreenState extends State<DisplayScreen>
 
     // Handle video errors first
     if (controller.value.hasError) {
-      debugPrint('Video playback error: ${controller.value.errorDescription}');
+      debugPrint('❌ Video playback error: ${controller.value.errorDescription}');
       controller.removeListener(_videoListener);
       _nextContent();
       return;
@@ -189,6 +389,7 @@ class _DisplayScreenState extends State<DisplayScreen>
     if (controller.value.isInitialized &&
         controller.value.position >= controller.value.duration &&
         controller.value.duration > Duration.zero) {
+      debugPrint('✅ Video finished playing, moving to next content');
       controller.removeListener(_videoListener);
       _nextContent();
     }
@@ -199,9 +400,12 @@ class _DisplayScreenState extends State<DisplayScreen>
 
     final durationInSeconds = duration.toInt().clamp(1, 300); // Min 1s, Max 5min
 
+    debugPrint('⏰ Scheduling next content in ${durationInSeconds}s');
+
     _rotationTimer?.cancel();
     _rotationTimer = Timer(Duration(seconds: durationInSeconds), () {
       if (!_isDisposed && mounted) {
+        debugPrint('⏭️ Timer triggered, moving to next content');
         _nextContent();
       }
     });
@@ -226,16 +430,42 @@ class _DisplayScreenState extends State<DisplayScreen>
     if (_isDisposed) return;
 
     try {
+      debugPrint('🔄 Refreshing content from server...');
       final contentProvider = Provider.of<ContentProvider>(context, listen: false);
       await contentProvider.refreshContent();
 
       if (!_isDisposed && mounted) {
+        debugPrint('✅ Content refresh complete, restarting rotation');
         _startContentRotation();
       }
     } catch (e) {
-      debugPrint('Content refresh error: $e');
+      debugPrint('❌ Content refresh error: $e');
       // Error will be shown by Consumer
     }
+  }
+
+  // Add method to manually trigger Odoo polling check
+  Future<void> _manualOdooCheck() async {
+    try {
+      debugPrint('🔍 Manual Odoo check triggered');
+      await _odooPollingService.checkNow();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Checking for updates from Odoo...'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Manual Odoo check error: $e');
+    }
+  }
+
+  // Add method to get Odoo polling status
+  Map<String, dynamic> getOdooPollingStatus() {
+    return _odooPollingService.getStatus();
   }
 
   void _showLogoutDialog() {
@@ -280,6 +510,9 @@ class _DisplayScreenState extends State<DisplayScreen>
 
   Future<void> _logout() async {
     try {
+      // Stop Odoo polling before logout
+      _odooPollingService.stopPolling();
+
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       await authProvider.logout();
 
@@ -290,7 +523,7 @@ class _DisplayScreenState extends State<DisplayScreen>
         );
       }
     } catch (e) {
-      debugPrint('Logout error: $e');
+      debugPrint('❌ Logout error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -435,16 +668,34 @@ class _DisplayScreenState extends State<DisplayScreen>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
-              ElevatedButton.icon(
-                onPressed: _refreshContent,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Check for Content'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
+              Wrap(
+                spacing: 16,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _refreshContent,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Check for Content'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                    ),
                   ),
-                ),
+                  ElevatedButton.icon(
+                    onPressed: _manualOdooCheck,
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Check Odoo'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -484,7 +735,7 @@ class _DisplayScreenState extends State<DisplayScreen>
           );
         },
         errorBuilder: (context, error, stackTrace) {
-          debugPrint('Image display error: $error');
+          debugPrint('❌ Image display error: $error');
           return Container(
             color: Colors.black,
             child: const Center(
@@ -558,6 +809,9 @@ class _DisplayScreenState extends State<DisplayScreen>
                   _showLogoutDialog();
                 }
               },
+              // Pass Odoo status method to admin overlay
+              getOdooStatus: getOdooPollingStatus,
+              onManualOdooCheck: _manualOdooCheck,
             ),
 
           // Hidden admin access area (top-right corner)
@@ -577,6 +831,8 @@ class _DisplayScreenState extends State<DisplayScreen>
               ),
             ),
           ),
+
+          // Loading indicator overlay
           Consumer<ContentProvider>(
             builder: (context, contentProvider, child) {
               if (contentProvider.isLoading) {

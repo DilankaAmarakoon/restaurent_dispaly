@@ -11,7 +11,7 @@ class AdminOverlay extends StatelessWidget {
     super.key,
     required this.onClose,
     required this.onRefresh,
-    required this.onLogout,
+    required this.onLogout, required Map<String, dynamic> Function() getOdooStatus, required Future<void> Function() onManualOdooCheck,
   });
   @override
   Widget build(BuildContext context) {

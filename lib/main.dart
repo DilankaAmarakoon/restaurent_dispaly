@@ -46,7 +46,7 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
     // Initialize notification service
-    NotificationService().initialize(context);
+    // NotificationService().initialize(context);
   }
 
   @override
